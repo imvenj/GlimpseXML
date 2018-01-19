@@ -219,8 +219,9 @@ public final class Node: Equatable, Hashable, CustomDebugStringConvertible {
     public init(doc: Document? = nil, name: String? = nil, namespace: Namespace? = nil, attributes: [(name: String, value: String)]? = nil, text: String? = nil, children: [Node]? = nil) {
         self.ownsNode = doc == nil
 
-
-        self.nodePtr = NodePtr(xmlNewDocNode(doc == nil ? nil : castDoc(doc!.docPtr), namespace == nil ? nil : castNs(namespace!.nsPtr), name ?? "", text ?? ""))
+        let xmlNodePtr = xmlNewDocNode(doc == nil ? nil : castDoc(doc!.docPtr), namespace == nil ? nil : castNs(namespace!.nsPtr), name ?? "", "")!
+        xmlNodeAddContent(xmlNodePtr, text) // Escape special characters.
+        self.nodePtr = NodePtr(xmlNodePtr)
 
         let _ = attributes?.map { self.updateAttribute($0, value: $1, namespace: namespace) }
 
