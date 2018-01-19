@@ -12,15 +12,15 @@ private typealias DocumentPtr = UnsafePointer<xmlDoc>
 private typealias NodePtr = UnsafePointer<xmlNode>
 private typealias NamespacePtr = UnsafePointer<xmlNs>
 
-private func castDoc(doc: DocumentPtr)->xmlDocPtr { return UnsafeMutablePointer<xmlDoc>(doc) }
-private func castNode(node: NodePtr)->xmlNodePtr { return UnsafeMutablePointer<xmlNode>(node) }
-private func castNs(ns: NamespacePtr)->xmlNsPtr { return UnsafeMutablePointer<xmlNs>(ns) }
+private func castDoc(_ doc: DocumentPtr)->xmlDocPtr { return UnsafeMutablePointer<xmlDoc>(mutating: doc) }
+private func castNode(_ node: NodePtr)->xmlNodePtr { return UnsafeMutablePointer<xmlNode>(mutating: node) }
+private func castNs(_ ns: NamespacePtr)->xmlNsPtr { return UnsafeMutablePointer<xmlNs>(mutating: ns) }
 
 
 /// The root of an XML Document, containing a single root element
 public final class Document: Equatable, Hashable, CustomDebugStringConvertible {
-    private let docPtr: DocumentPtr
-    private var ownsDoc: Bool
+    fileprivate let docPtr: DocumentPtr
+    fileprivate var ownsDoc: Bool
 
 
     /// Creates a new Document with the given version string and root node
@@ -45,7 +45,7 @@ public final class Document: Equatable, Hashable, CustomDebugStringConvertible {
         self.init(doc: DocumentPtr(xmlCopyDoc(castDoc(copy.docPtr), 1 /* 1 => recursive */)), owns: true)
     }
 
-    private init(doc: DocumentPtr, owns: Bool) {
+    fileprivate init(doc: DocumentPtr, owns: Bool) {
         self.ownsDoc = owns
         self.docPtr = doc
     }
@@ -59,16 +59,16 @@ public final class Document: Equatable, Hashable, CustomDebugStringConvertible {
     public var hashValue: Int { return 0 }
 
     /// Create a curried xpath finder with the given namespaces
-    public func xpath(ns: [String:String]? = nil, _ path: String) throws -> [Node] {
+    public func xpath(_ ns: [String:String]? = nil, _ path: String) throws -> [Node] {
         return try rootElement.xpath(path, namespaces: ns)
     }
 
-    public func xpath(path: String, namespaces: [String:String]? = nil) throws -> [Node] {
+    public func xpath(_ path: String, namespaces: [String:String]? = nil) throws -> [Node] {
         return try rootElement.xpath(path, namespaces: namespaces)
     }
 
-    public func serialize(indent indent: Bool = false, encoding: String? = "utf8") -> String {
-        var buf: UnsafeMutablePointer<xmlChar> = nil
+    public func serialize(indent: Bool = false, encoding: String? = "utf8") -> String {
+        var buf: UnsafeMutablePointer<xmlChar>? = nil
         var buflen: Int32 = 0
         let format: Int32 = indent ? 1 : 0
 
@@ -80,25 +80,25 @@ public final class Document: Equatable, Hashable, CustomDebugStringConvertible {
 
         var string: String = ""
         if buflen >= 0 {
-            if let str = stringFromFixedCString(UnsafeBufferPointer(start: UnsafePointer(buf), count: Int(buflen))) {
+            if let str = buf?.withMemoryRebound(to: Int8.self, capacity: Int(buflen), { String.init(cString: $0) }) {
                 string = str
             }
-            buf.dealloc(Int(buflen))
+            buf?.deallocate(capacity: Int(buflen))
         }
 
         return string
     }
 
-    public var debugDescription: String { return serialize() ?? "<XMLDocument>" }
+    public var debugDescription: String { return serialize() }
 
     public var rootElement: Node {
         get { return Node(node: NodePtr(xmlDocGetRootElement(castDoc(docPtr))), owns: false) }
     }
 
     /// Parses the XML contained in the given string, returning the Document or an Error
-    public class func parseString(xmlString: String, encoding: String? = nil, html: Bool = false) throws -> Document {
+    public class func parseString(_ xmlString: String, encoding: String? = nil, html: Bool = false) throws -> Document {
         var doc: Document?
-        var err: ErrorType?
+        var err: Error?
         // FIXME: withCString doesn't declare rethrows, so we need to hold value & error in bogus optionals
         let _: Void = xmlString.withCString { str in
             do {
@@ -112,12 +112,12 @@ public final class Document: Equatable, Hashable, CustomDebugStringConvertible {
     }
 
     /// Parses the XML contained in the given data, returning the Document or an Error
-    public class func parseData(xmlData: UnsafePointer<CChar>, length: Int, encoding: String? = nil, html: Bool = false) throws -> Document {
+    public class func parseData(_ xmlData: UnsafePointer<CChar>, length: Int, encoding: String? = nil, html: Bool = false) throws -> Document {
         return try parse(.data(data: xmlData, length: Int32(length)), encoding: encoding, html: html)
     }
 
     /// Parses the XML contained at the given filename, returning the Document or an Error
-    public class func parseFile(fileName: String, encoding: String? = nil, html: Bool = false) throws -> Document {
+    public class func parseFile(_ fileName: String, encoding: String? = nil, html: Bool = false) throws -> Document {
         return try parse(.file(fileName: fileName), encoding: encoding, html: html)
     }
 
@@ -127,7 +127,7 @@ public final class Document: Equatable, Hashable, CustomDebugStringConvertible {
         case data(data: UnsafePointer<CChar>, length: Int32)
     }
 
-    private class func parse(source: XMLLoadSource, encoding: String?, html: Bool) throws -> Document {
+    fileprivate class func parse(_ source: XMLLoadSource, encoding: String?, html: Bool) throws -> Document {
         xmlInitParser()
         precondition(xmlHasFeature(XML_WITH_THREAD) != 0)
         xmlSetStructuredErrorFunc(nil) { ctx, err in } // squelch errors going to stdout
@@ -177,18 +177,17 @@ public final class Document: Equatable, Hashable, CustomDebugStringConvertible {
             }
         }
 
-        let err = errorFromXmlError(ctx.memory.lastError)
+        let xmlErr = (ctx?.pointee.lastError)!
 
-        if let doc = doc {
-            if doc != nil { // unwrapped pointer can still be nil
-                let document = Document(doc: DocumentPtr(doc), owns: true)
-                return document
-            }
+        if let doc = doc, xmlErr.code == 0 {
+            let document = Document(doc: DocumentPtr(doc), owns: true)
+            return document
         }
-
-        throw err
+        else {
+            let err = errorFromXmlError(xmlErr)
+            throw err
+        }
     }
-
 }
 
 /// Equality is defined by whether the underlying document pointer is the same
@@ -199,17 +198,17 @@ public func ==(lhs: Document, rhs: Document) -> Bool {
 
 /// A Node in an Document
 public final class Node: Equatable, Hashable, CustomDebugStringConvertible {
-    private let nodePtr: NodePtr
-    private var ownsNode: Bool
+    fileprivate let nodePtr: NodePtr
+    fileprivate var ownsNode: Bool
 
-    private init(node: NodePtr, owns: Bool) {
+    fileprivate init(node: NodePtr, owns: Bool) {
         self.ownsNode = owns
         self.nodePtr = node
     }
 
     public init(doc: Document? = nil, cdata: String) {
         self.ownsNode = doc == nil
-        self.nodePtr = NodePtr(xmlNewCDataBlock(doc == nil ? nil : castDoc(doc!.docPtr), cdata, Int32(cdata.nulTerminatedUTF8.count)))
+        self.nodePtr = NodePtr(xmlNewCDataBlock(doc == nil ? nil : castDoc(doc!.docPtr), cdata, Int32(cdata.utf8.count)))
     }
 
     public init(doc: Document? = nil, text: String) {
@@ -249,7 +248,7 @@ public final class Node: Equatable, Hashable, CustomDebugStringConvertible {
 
     /// The name of the node
     public var name: String? {
-        get { return stringFromXMLString(castNode(nodePtr).memory.name) }
+        get { return stringFromXMLString(castNode(nodePtr).pointee.name) }
         set(value) {
             if let value = value {
                 xmlNodeSetName(castNode(nodePtr), value)
@@ -274,22 +273,22 @@ public final class Node: Equatable, Hashable, CustomDebugStringConvertible {
 
     /// The parent node of the node
     public var parent: Node? {
-        let parentPtr = castNode(nodePtr).memory.parent
+        let parentPtr = castNode(nodePtr).pointee.parent
         if parentPtr == nil {
             return nil
         } else {
-            return Node(node: NodePtr(parentPtr), owns: false)
+            return Node(node: NodePtr(parentPtr!), owns: false)
         }
     }
 
     /// The next sibling of the node
     public var next: Node? {
         get {
-            let nextPtr = castNode(nodePtr).memory.next
+            let nextPtr = castNode(nodePtr).pointee.next
             if nextPtr == nil {
                 return nil
             } else {
-                return Node(node: NodePtr(nextPtr), owns: false)
+                return Node(node: NodePtr(nextPtr!), owns: false)
             }
         }
 
@@ -305,11 +304,11 @@ public final class Node: Equatable, Hashable, CustomDebugStringConvertible {
     /// The previous sibling of the node
     public var prev: Node? {
         get {
-            let prevPtr = castNode(nodePtr).memory.prev
+            let prevPtr = castNode(nodePtr).pointee.prev
             if prevPtr == nil {
                 return nil
             } else {
-                return Node(node: NodePtr(prevPtr), owns: false)
+                return Node(node: NodePtr(prevPtr!), owns: false)
             }
         }
 
@@ -327,10 +326,10 @@ public final class Node: Equatable, Hashable, CustomDebugStringConvertible {
     public var children: [Node] {
         get {
             var nodes = [Node]()
-            var child = castNode(nodePtr).memory.children
+            var child = castNode(nodePtr).pointee.children
             while child != nil {
-                defer { child = child.memory.next }
-                nodes += [Node(node: NodePtr(child), owns: false)]
+                defer { child = child?.pointee.next }
+                nodes += [Node(node: NodePtr(child!), owns: false)]
             }
             return nodes
         }
@@ -342,7 +341,8 @@ public final class Node: Equatable, Hashable, CustomDebugStringConvertible {
     }
 
     /// Adds the given node to the end of the child node list; if the child is already in a node tree then a copy will be added and the copy will be returned
-    public func addChild(child: Node) -> Node {
+    @discardableResult
+    public func addChild(_ child: Node) -> Node {
         if child.ownsNode {
             // we don't have enough information to transfer ownership directly, do copy instead?
             child.ownsNode = false // ownership transfers to the new parent
@@ -362,7 +362,7 @@ public final class Node: Equatable, Hashable, CustomDebugStringConvertible {
     }
 
     /// Returns the value for the given attribute name with the optional namespace
-    public func attributeValue(name: String, namespace: Namespace? = nil) -> String? {
+    public func attributeValue(_ name: String, namespace: Namespace? = nil) -> String? {
         if let href = namespace?.href {
             return stringFromXMLString(xmlGetNsProp(castNode(nodePtr), name, href))
         } else {
@@ -371,7 +371,7 @@ public final class Node: Equatable, Hashable, CustomDebugStringConvertible {
     }
 
     /// Updates the value for the given attribute
-    public func updateAttribute(name: String, value: String, namespace: Namespace? = nil) {
+    public func updateAttribute(_ name: String, value: String, namespace: Namespace? = nil) {
         if let namespace = namespace {
             xmlSetNsProp(castNode(nodePtr), castNs(namespace.nsPtr), name, value)
         } else {
@@ -380,8 +380,9 @@ public final class Node: Equatable, Hashable, CustomDebugStringConvertible {
     }
 
     /// Removes the given attribute
-    public func removeAttribute(name: String, namespace: Namespace? = nil) -> Bool {
-        var attr: xmlAttrPtr
+    @discardableResult
+    public func removeAttribute(_ name: String, namespace: Namespace? = nil) -> Bool {
+        var attr: xmlAttrPtr?
         if let href = namespace?.href {
             attr = xmlHasNsProp(castNode(nodePtr), name, href)
         } else {
@@ -413,7 +414,7 @@ public final class Node: Equatable, Hashable, CustomDebugStringConvertible {
 
     /// The name of the type of node
     public var nodeType: String {
-        switch castNode(nodePtr).memory.type.rawValue {
+        switch castNode(nodePtr).pointee.type.rawValue {
         case XML_ELEMENT_NODE.rawValue: return "Element"
         case XML_ATTRIBUTE_NODE.rawValue: return "Attribute"
         case XML_TEXT_NODE.rawValue: return "Text"
@@ -440,19 +441,18 @@ public final class Node: Equatable, Hashable, CustomDebugStringConvertible {
     }
 
     /// Returns this node as an XML string with optional indentation
-    public func serialize(indent indent: Bool = false) -> String {
+    public func serialize(indent: Bool = false) -> String {
         let buf = xmlBufferCreate()
 
         let level: Int32 = 0
         let format: Int32 = indent ? 1 : 0
 
-        let result = xmlNodeDump(buf, castNode(nodePtr).memory.doc, castNode(nodePtr), level, format)
+        let result = xmlNodeDump(buf, castNode(nodePtr).pointee.doc, castNode(nodePtr), level, format)
 
         var string: String = ""
         if result >= 0 {
             let buflen: Int32 = xmlBufferLength(buf)
-            let str: UnsafePointer<CUnsignedChar> = xmlBufferContent(buf)
-            if let str = stringFromFixedCString(UnsafeBufferPointer(start: UnsafePointer(str), count: Int(buflen))) {
+            if let str = buf?.pointee.content.withMemoryRebound(to: Int8.self, capacity: Int(buflen), { String.init(cString: $0) }) {
                 string = str
             }
         }
@@ -463,8 +463,8 @@ public final class Node: Equatable, Hashable, CustomDebugStringConvertible {
 
     /// The owning document for the node, if any
     public var document: Document? {
-        let docPtr = castNode(nodePtr).memory.doc
-        return docPtr == nil ? nil : Document(doc: DocumentPtr(docPtr), owns: false)
+        let docPtr = castNode(nodePtr).pointee.doc
+        return docPtr == nil ? nil : Document(doc: DocumentPtr(docPtr!), owns: false)
     }
 
     public var debugDescription: String {
@@ -472,15 +472,15 @@ public final class Node: Equatable, Hashable, CustomDebugStringConvertible {
     }
 
     /// Evaluates the given xpath and returns matching nodes
-    public func xpath(path: String, namespaces: [String:String]? = nil) throws -> [Node] {
+    public func xpath(_ path: String, namespaces: [String:String]? = nil) throws -> [Node] {
 
         // xmlXPathNewContext requires that a node be part of a document; host it inside a temporary one if it is standalone
-        var nodeDoc = castNode(nodePtr).memory.doc
+        var nodeDoc = castNode(nodePtr).pointee.doc
         if nodeDoc == nil {
             nodeDoc = xmlNewDoc(nil)
             var topParent = castNode(nodePtr)
-            while topParent.memory.parent != nil {
-                topParent = topParent.memory.parent
+            while topParent.pointee.parent != nil {
+                topParent = topParent.pointee.parent
             }
             xmlDocSetRootElement(nodeDoc, topParent)
 
@@ -507,22 +507,22 @@ public final class Node: Equatable, Hashable, CustomDebugStringConvertible {
 
         let xpathObj = xmlXPathNodeEval(castNode(nodePtr), path, xpathCtx)
         if xpathObj == nil {
-            let lastError = xpathCtx.memory.lastError
-            let error = errorFromXmlError(lastError)
+            let lastError = xpathCtx?.pointee.lastError
+            let error = errorFromXmlError(lastError!)
             throw error
         }
         defer { xmlXPathFreeObject(xpathObj) }
 
         var results = [Node]()
-        let nodeSet = xpathObj.memory.nodesetval
+        let nodeSet = xpathObj?.pointee.nodesetval
         if nodeSet != nil {
-            let count = Int(nodeSet.memory.nodeNr)
+            let count = Int((nodeSet?.pointee.nodeNr)!)
             var index = 0
             while index < count {
                 defer { index += 1 }
-                let node = nodeSet.memory.nodeTab[index]
+                let node = nodeSet?.pointee.nodeTab[index]
                 if node != nil {
-                    results += [Node(node: NodePtr(node), owns: false)]
+                    results += [Node(node: NodePtr(node!), owns: false)]
                 }
             }
         }
@@ -543,12 +543,12 @@ public func +=(lhs: Node, rhs: Node) -> Node {
 }
 
 
-private func errorFromXmlError(error: xmlError)->XMLError {
+private func errorFromXmlError(_ error: xmlError)->XMLError {
     let level = errorLevelFromXmlErrorLevel(error.level)
-    return XMLError(domain: XMLError.ErrorDomain.fromErrorDomain(error.domain), code: error.code, message: String.fromCString(error.message) ?? "", level: level, file: String.fromCString(error.file) ?? "", line: error.line, str1: String.fromCString(error.str1) ?? "", str2: String.fromCString(error.str2) ?? "", str3: String.fromCString(error.str3) ?? "", int1: error.int1, column: error.int2)
+    return XMLError(domain: XMLError.ErrorDomain.fromErrorDomain(error.domain), code: error.code, message: String(cString: error.message), level: level, file: String(cString: error.file), line: error.line, str1: String(cString: error.str1), str2: String(cString: error.str2), str3: String(cString: error.str3), int1: error.int1, column: error.int2)
 }
 
-private func errorLevelFromXmlErrorLevel(level: xmlErrorLevel) -> XMLError.ErrorLevel {
+private func errorLevelFromXmlErrorLevel(_ level: xmlErrorLevel) -> XMLError.ErrorLevel {
     switch level.rawValue {
     case XML_ERR_NONE.rawValue: return .none
     case XML_ERR_WARNING.rawValue: return .warning
@@ -559,11 +559,11 @@ private func errorLevelFromXmlErrorLevel(level: xmlErrorLevel) -> XMLError.Error
 }
 
 /// A namespace for a document, node, or attribute
-public class Namespace {
-    private let nsPtr: NamespacePtr
-    private let ownsNode: Bool
+open class Namespace {
+    fileprivate let nsPtr: NamespacePtr
+    fileprivate let ownsNode: Bool
 
-    private init(ns: NamespacePtr, owns: Bool) {
+    fileprivate init(ns: NamespacePtr, owns: Bool) {
         self.ownsNode = owns
         self.nsPtr = ns
     }
@@ -583,8 +583,8 @@ public class Namespace {
         }
     }
 
-    private var href: String? { return stringFromXMLString(castNs(nsPtr).memory.href) }
-    private var prefix: String? { return stringFromXMLString(castNs(nsPtr).memory.prefix) }
+    fileprivate var href: String? { return stringFromXMLString(castNs(nsPtr).pointee.href) }
+    fileprivate var prefix: String? { return stringFromXMLString(castNs(nsPtr).pointee.prefix) }
     
 }
 
@@ -620,68 +620,73 @@ public enum XMLResult<T>: CustomDebugStringConvertible {
 }
 
 /// Wrapper for a generic value; workaround for Swift enum generic deficiency
-public class XMLValue<T> {
-    public let value: T
+open class XMLValue<T> {
+    open let value: T
     public init(_ value: T) { self.value = value }
+}
+
+extension XMLError: Error {
+    public var _domain: String { return domain.debugDescription }
+    public var _code: Int { return Int(code) }
 }
 
 // A stuctured XML parse of processing error
 public struct XMLError: CustomDebugStringConvertible {
-
+    
     public enum ErrorLevel: CustomDebugStringConvertible {
         case none, warning, error, fatal
 
         public var debugDescription: String {
             switch self {
-            case none: return "None"
-            case warning: return "Warning"
-            case error: return "Error"
-            case fatal: return "Fatal"
+            case .none: return "None"
+            case .warning: return "Warning"
+            case .error: return "Error"
+            case .fatal: return "Fatal"
             }
         }
     }
 
     /// The domain (type) of error that occurred
     public enum ErrorDomain: UInt, CustomDebugStringConvertible {
-        case none, parser, tree, namespace, DTD, HTML, memory, output, IO, FTP, HTTP, xInclude, xPath, xPointer, regexp, datatype, schemasP, schemasV, relaxNGP, relaxNGV, catalog, C14N, XSLT, valid, check, writer, module, I18N, schematronV, buffer, URI
+        case none, parser, tree, namespace, dtd, html, memory, output, io, ftp, http, xInclude, xPath, xPointer, regexp, datatype, schemasP, schemasV, relaxNGP, relaxNGV, catalog, c14N, xslt, valid, check, writer, module, i18N, schematronV, buffer, uri
 
         public var debugDescription: String {
             switch self {
-            case none: return "None"
-            case parser: return "Parser"
-            case tree: return "Tree"
-            case namespace: return "Namespace"
-            case DTD: return "DTD"
-            case HTML: return "HTML"
-            case memory: return "Memory"
-            case output: return "Output"
-            case IO: return "IO"
-            case FTP: return "FTP"
-            case HTTP: return "HTTP"
-            case xInclude: return "XInclude"
-            case xPath: return "XPath"
-            case xPointer: return "XPointer"
-            case regexp: return "Regexp"
-            case datatype: return "Datatype"
-            case schemasP: return "SchemasP"
-            case schemasV: return "SchemasV"
-            case relaxNGP: return "RelaxNGP"
-            case relaxNGV: return "RelaxNGV"
-            case catalog: return "Catalog"
-            case C14N: return "C14N"
-            case XSLT: return "XSLT"
-            case valid: return "Valid"
-            case check: return "Check"
-            case writer: return "Writer"
-            case module: return "Module"
-            case I18N: return "I18N"
-            case schematronV: return "SchematronV"
-            case buffer: return "Buffer"
-            case URI: return "URI"
+            case .none: return "None"
+            case .parser: return "Parser"
+            case .tree: return "Tree"
+            case .namespace: return "Namespace"
+            case .dtd: return "DTD"
+            case .html: return "HTML"
+            case .memory: return "Memory"
+            case .output: return "Output"
+            case .io: return "IO"
+            case .ftp: return "FTP"
+            case .http: return "HTTP"
+            case .xInclude: return "XInclude"
+            case .xPath: return "XPath"
+            case .xPointer: return "XPointer"
+            case .regexp: return "Regexp"
+            case .datatype: return "Datatype"
+            case .schemasP: return "SchemasP"
+            case .schemasV: return "SchemasV"
+            case .relaxNGP: return "RelaxNGP"
+            case .relaxNGV: return "RelaxNGV"
+            case .catalog: return "Catalog"
+            case .c14N: return "C14N"
+            case .xslt: return "XSLT"
+            case .valid: return "Valid"
+            case .check: return "Check"
+            case .writer: return "Writer"
+            case .module: return "Module"
+            case .i18N: return "I18N"
+            case .schematronV: return "SchematronV"
+            case .buffer: return "Buffer"
+            case .uri: return "URI"
             }
         }
 
-        public static func fromErrorDomain(domain: Int32) -> ErrorDomain {
+        public static func fromErrorDomain(_ domain: Int32) -> ErrorDomain {
             return ErrorDomain(rawValue: UInt(domain)) ?? .none
         }
     }
@@ -742,24 +747,21 @@ public struct XMLError: CustomDebugStringConvertible {
     }
 }
 
-extension XMLError: ErrorType {
-    // FIXME: needed for ErrorType conformance in Swift 2 beta
-    public var _domain: String { return domain.debugDescription }
-    public var _code: Int { return Int(code) }
-}
-
-private func stringFromXMLString(string: UnsafePointer<xmlChar>, free: Bool = false) -> String? {
-    let str = String.fromCString(UnsafePointer(string))
+private func stringFromXMLString(_ string: UnsafePointer<xmlChar>, free: Bool = false) -> String? {
+    let str = String(cString: UnsafePointer(string))
     if free {
-        xmlFree(UnsafeMutablePointer<Void>(string))
+        xmlFree(UnsafeMutableRawPointer(mutating: string))
     }
     return str
 }
 
-private func stringFromFixedCString(cs: UnsafeBufferPointer<CChar>) -> String? {
-    let buf = UnsafeMutablePointer<CChar>.alloc(cs.count + 1)
-    buf.initializeFrom(cs + [0]) // tack on a zero to make it a valid c string
-    let (s, _) = String.fromCStringRepairingIllFormedUTF8(buf)
-    buf.dealloc(cs.count + 1)
-    return s
+private func stringFromFixedCString(_ cs: UnsafeBufferPointer<CChar>) -> String {
+    let count = cs.count + 1
+    let ptr = UnsafeMutablePointer<CChar>.allocate(capacity: count)
+    let buf = UnsafeMutableBufferPointer.init(start: ptr, count: count)
+
+    let result = buf.initialize(from: cs + [0])
+    let charArr = Array<CChar>(result.0)
+    let str = String.init(cString: charArr)
+    return str
 }
