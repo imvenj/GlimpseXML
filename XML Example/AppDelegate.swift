@@ -25,7 +25,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             
         print("First book: \(trackCount)")
 
-        //let xml = XMLDocument()
+        //let _ = try? Document.parseString("")
 
         let node = Node(name: "library", attributes: [("url", "glimpse.io")], children: [
             Node(name: "inventory", children: [

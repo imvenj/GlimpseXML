@@ -179,7 +179,7 @@ public final class Document: Equatable, Hashable, CustomDebugStringConvertible {
 
         let xmlErr = (ctx?.pointee.lastError)!
 
-        if let doc = doc, xmlErr.code == 0 {
+        if let doc = doc {
             let document = Document(doc: DocumentPtr(doc), owns: true)
             return document
         }
@@ -546,7 +546,12 @@ public func +=(lhs: Node, rhs: Node) -> Node {
 
 private func errorFromXmlError(_ error: xmlError)->XMLError {
     let level = errorLevelFromXmlErrorLevel(error.level)
-    return XMLError(domain: XMLError.ErrorDomain.fromErrorDomain(error.domain), code: error.code, message: String(cString: error.message), level: level, file: String(cString: error.file), line: error.line, str1: String(cString: error.str1), str2: String(cString: error.str2), str3: String(cString: error.str3), int1: error.int1, column: error.int2)
+    let message = (error.message == nil) ? "" : String(cString: error.message)
+    let file = (error.file == nil) ? "" :String(cString: error.file)
+    let str1 = (error.str1 == nil) ? "" :String(cString: error.str1)
+    let str2 = (error.str2 == nil) ? "" :String(cString: error.str2)
+    let str3 = (error.str3 == nil) ? "" :String(cString: error.str3)
+    return XMLError(domain: XMLError.ErrorDomain.fromErrorDomain(error.domain), code: error.code, message: message, level: level, file: file, line: error.line, str1: str1, str2: str2, str3: str3, int1: error.int1, column: error.int2)
 }
 
 private func errorLevelFromXmlErrorLevel(_ level: xmlErrorLevel) -> XMLError.ErrorLevel {
