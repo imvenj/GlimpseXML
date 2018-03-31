@@ -83,7 +83,7 @@ public final class Document: Equatable, Hashable, CustomDebugStringConvertible {
             if let str = buf?.withMemoryRebound(to: Int8.self, capacity: Int(buflen), { String.init(cString: $0) }) {
                 string = str
             }
-            buf?.deallocate(capacity: Int(buflen))
+            buf?.deallocate()
         }
 
         return string
