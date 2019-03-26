@@ -56,7 +56,10 @@ public final class Document: Equatable, Hashable, CustomDebugStringConvertible {
         }
     }
 
-    public var hashValue: Int { return 0 }
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(docPtr)
+        hasher.combine(ownsDoc)
+    }
 
     /// Create a curried xpath finder with the given namespaces
     public func xpath(_ ns: [String:String]? = nil, _ path: String) throws -> [Node] {
@@ -240,7 +243,10 @@ public final class Node: Equatable, Hashable, CustomDebugStringConvertible {
         }
     }
 
-    public var hashValue: Int { return name?.hashValue ?? 0 }
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(text)
+    }
 
     /// Returns a deep copy of the current node
     public func copy() -> Node {
@@ -486,7 +492,7 @@ public final class Node: Equatable, Hashable, CustomDebugStringConvertible {
             xmlDocSetRootElement(nodeDoc, topParent)
 
             // release our temporary document when we are done
-            defer {
+            do {
                 xmlUnlinkNode(topParent)
                 xmlSetTreeDoc(topParent, nil)
                 xmlFreeDoc(nodeDoc)
@@ -627,7 +633,7 @@ public enum XMLResult<T>: CustomDebugStringConvertible {
 
 /// Wrapper for a generic value; workaround for Swift enum generic deficiency
 open class XMLValue<T> {
-    open let value: T
+    public let value: T
     public init(_ value: T) { self.value = value }
 }
 
